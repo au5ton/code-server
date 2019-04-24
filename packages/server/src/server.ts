@@ -90,6 +90,9 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 	};
 
 	const app = express();
+	const router = express();
+	app.use("/long/fork/code", router);
+
 	if (options.registerMiddleware) {
 		options.registerMiddleware(app);
 	}
@@ -133,7 +136,8 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 		});
 	});
 
-	const server = httpolyglot.createServer(options.allowHttp ? {} : options.httpsOptions || certs, app) as http.Server;
+	const server = httpolyglot.createServer(options.allowHttp ? {} : options.httpsOptions || certs, router) as http.Server;
+	// TODO: specify WebSocket path server.
 	const wss = new ws.Server({ server });
 
 	wss.shouldHandle = (req): boolean => {
@@ -142,6 +146,7 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 
 	const portScanner = createPortScanner();
 	wss.on("connection", async (ws, req) => {
+		logger.info(`wss.on(connection) => ${req.url}`);
 		if (req.url && req.url.startsWith("/tunnel")) {
 			try {
 				const rawPort = req.url.split("/").pop();
@@ -195,17 +200,19 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 		to: string = "", from: string = "",
 		code: number = 302, protocol: string = req.protocol,
 	): void => {
-		const currentUrl = `${protocol}://${req.headers.host}${req.originalUrl}`;
+		const currentUrl = `${protocol}://${req.headers.host}${router.mountpath}${req.originalUrl}`;
 		const newUrl = url.parse(currentUrl);
 		if (from && newUrl.pathname) {
+			// replaces `/from` with `/`
 			newUrl.pathname = newUrl.pathname.replace(new RegExp(`\/${from}\/?$`), "/");
 		}
 		if (to) {
+			// replaces `/` with `` + `/to`
 			newUrl.pathname = (newUrl.pathname || "").replace(/\/$/, "") + `/${to}`;
 		}
 		newUrl.path = undefined; // Path is not necessary for format().
 		const newUrlString = url.format(newUrl);
-		logger.trace(`Redirecting from ${currentUrl} to ${newUrlString}`);
+		logger.info(`Redirecting from ${currentUrl} to ${newUrlString}`);
 
 		return res.redirect(code, newUrlString);
 	};
@@ -213,8 +220,8 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 	const baseDir = buildDir || path.join(__dirname, "..");
 	const staticGzip = expressStaticGzip(path.join(baseDir, "build/web"));
 
-	app.use((req, res, next) => {
-		logger.trace(`\u001B[1m${req.method} ${res.statusCode} \u001B[0m${req.originalUrl}`, field("host", req.hostname), field("ip", req.ip));
+	router.use((req, res, next) => {
+		logger.info(`\u001B[1m${req.method} ${res.statusCode} \u001B[0m${req.originalUrl}`, field("host", req.hostname), field("ip", req.ip));
 
 		// Force HTTPS unless allowing HTTP.
 		if (!isEncrypted(req.socket) && !options.allowHttp) {
@@ -225,13 +232,14 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 	});
 
 	// @ts-ignore
-	app.use((err, _req, _res, next) => {
+	router.use((err, _req, _res, next) => {
 		logger.error(err.message);
 		next();
 	});
 
 	// If not authenticated, redirect to the login page.
-	app.get("/", (req, res, next) => {
+	router.get("/", (req, res, next) => {
+		logger.info("router.GET /");
 		if (!isAuthed(req)) {
 			return redirect(req, res, "login");
 		}
@@ -239,7 +247,8 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 	});
 
 	// If already authenticated, redirect back to the root.
-	app.get("/login", (req, res, next) => {
+	router.get("/login", (req, res, next) => {
+		logger.info("router.GET /login");
 		if (isAuthed(req)) {
 			return redirect(req, res, "", "login");
 		}
@@ -247,14 +256,16 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 	});
 
 	// For getting general server data.
-	app.get("/ping", (_req, res) => {
+	router.get("/ping", (_req, res) => {
+		logger.info("router.GET /ping");
 		res.json({
 			hostname: os.hostname(),
 		});
 	});
 
 	// For getting a resource on disk.
-	app.get("/resource/:url(*)", async (req, res) => {
+	router.get("/resource/:url(*)", async (req, res) => {
+		logger.info("router.GET /resource/:url(*)");
 		if (!ensureAuthed(req, res)) {
 			return;
 		}
@@ -296,7 +307,8 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 	});
 
 	// For writing a resource to disk.
-	app.post("/resource/:url(*)", async (req, res) => {
+	router.post("/resource/:url(*)", async (req, res) => {
+		logger.info("router.POST /resource/:url(*)")
 		if (!ensureAuthed(req, res)) {
 			return;
 		}
@@ -325,7 +337,7 @@ export const createApp = async (options: CreateAppOptions): Promise<{
 	});
 
 	// Everything else just pulls from the static build directory.
-	app.use(staticGzip);
+	router.use(staticGzip);
 
 	return {
 		express: app,

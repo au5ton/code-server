@@ -88,6 +88,10 @@ Options:
     server_name code.example.com code.example.org;
       location / {
          proxy_pass http://localhost:8443/;
+         proxy_set_header Host $http_host;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+         proxy_set_header X-Forwarded-Host $server_name;
+         proxy_set_header X-Real-IP $remote_addr;
          proxy_set_header Upgrade $http_upgrade;
          proxy_set_header Connection upgrade;
          proxy_set_header Accept-Encoding gzip;
